@@ -55,33 +55,53 @@ exports.handler = async(event, context) => {
 
             break;
         case 'GET':
+            if (merchantId) {
+                const result = await dynamo.get({
+                    TableName: TABLE_NAME,
+                    Key: {
+                        partitionkey: MERCHANT_PK,
+                        sortkey: `${MERCHANT_SK_PREFIX}${merchantId}`,
+                    },
+                }).promise();
 
-            // if (merchantId) {
-            //     await dynamo.query()
-            // }
-            // body = await dynamo.scan({ TableName: event.queryStringParameters.TableName }).promise();
-            let queryParams = {
-                TableName: TABLE_NAME,
-                KeyConditionExpression: '#pk = :pk AND #sk = :sk',
-                ExpressionAttributeNames: {
-                    '#pk': 'partitionkey',
-                    '#sk': 'sortkey',
-                },
-                ExpressionAttributeValues: {
-                    ':pk': MERCHANT_PK,
-                    ':sk': `${MERCHANT_SK_PREFIX}${merchantId}`,
-                },
-            };
+                if (result && result.Item) {
+                    let queryParams = {
+                        TableName: TABLE_NAME,
+                        KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                        ExpressionAttributeNames: {
+                            '#pk': 'partitionkey',
+                        },
+                        ExpressionAttributeValues: {
+                            ':pk': `${MERCHANT_LOCATION_PK}${merchantId}`,
+                            ':sk': MERCHANT_LOCATION_SK_PREFIX,
+                        },
+                    };
 
-
-            const result = await dynamo.query(queryParams).promise();
-            if (result.Items && result.Items.length > 0) {
-                body = result.Items[0];
+                    const locations = await dynamo.query(queryParams).promise();
+                    const { id, name, category, defaultLocationId } = result.Item;
+                    body = {
+                        id,
+                        name,
+                        category,
+                        defaultLocationId,
+                        locations: locations.Items.map(loc => {
+                            let clone = { ...loc };
+                            delete clone.partitionkey;
+                            delete clone.sortkey;
+                            return clone;
+                        })
+                    };
+                }
+                else {
+                    errCode = '404';
+                    throw new Error(`Not found : merchantId ${merchantId}`);
+                }
             }
             else {
-                errCode = '404';
-                throw new Error(`Not found : merchantId ${merchantId}`);
+                errCode = '400';
+                throw new Error(`MerchantId missing in queryParams`);
             }
+
             break;
         case 'POST':
             const { id, name, category, locations } = JSON.parse(event.body);
@@ -115,28 +135,6 @@ exports.handler = async(event, context) => {
                 },
             }).promise();
 
-            /* const merchant = await dynamo.put({
-                TableName: TABLE_NAME,
-                Item: {
-                    partitionkey: MERCHANT_PK,
-                    sortkey: `${MERCHANT_SK_PREFIX}${id}`,
-                    id,
-                    name,
-                    category,
-                    defaultLocationId: defLocation.locationId
-                }
-            }).promise();
-
-            const location = await dynamo.put({
-                TableName: TABLE_NAME,
-                Item: {
-                    partitionkey: MERCHANT_LOCATION_PK,
-                    sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${id}`,
-                    ...defLocation
-                }
-            }).promise(); */
-
-            // body = { ...merchant, location };
             statusCode = '201';
             break;
         case 'PUT':
