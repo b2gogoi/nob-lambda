@@ -61,11 +61,12 @@ exports.handler = async(event, context) => {
                     };
 
                     const locations = await dynamo.query(queryParams).promise();
-                    const { id, name, category, defaultLocationId } = result.Item;
+                    const { id, name, category, defaultLocationId, logoUrl } = result.Item;
                     body = {
                         id,
                         name,
                         category,
+                        logoUrl,
                         defaultLocationId,
                         locations: locations.Items.map(loc => {
                             let clone = { ...loc };
@@ -131,17 +132,43 @@ exports.handler = async(event, context) => {
                 }).promise();
 
                 if (result && result.Item) {
-                    const location = JSON.parse(event.body);
-                    await dynamo.put({
-                        TableName: TABLE_NAME,
-                        Item: {
-                            partitionkey: `${MERCHANT_LOCATION_PK}${merchantId}`,
-                            sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${location.locationId}`,
-                            ...location
-                        }
-                    }).promise();
-                    statusCode = '201';
-                    body = { success: `A new branch: ${location.branch}, is added for merchant ${result.Item.name}` }
+                    const req = JSON.parse(event.body);
+
+                    // Add new location
+                    if (req.locationId) {
+                        const location = req;
+                        await dynamo.put({
+                            TableName: TABLE_NAME,
+                            Item: {
+                                partitionkey: `${MERCHANT_LOCATION_PK}${merchantId}`,
+                                sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${location.locationId}`,
+                                ...location
+                            }
+                        }).promise();
+                        statusCode = '201';
+                        body = { success: `A new branch: ${location.branch}, is added for merchant ${result.Item.name}` }
+                    }
+
+                    // Update Merchant logo
+                    if (req.logoUrl) {
+                        const update = await dynamo.update({
+                            TableName: TABLE_NAME,
+                            Key: {
+                                partitionkey: MERCHANT_PK,
+                                sortkey: `${MERCHANT_SK_PREFIX}${merchantId}`,
+                            },
+                            UpdateExpression: 'SET logoUrl = :logo',
+                            ExpressionAttributeValues: {
+                                ':logo': req.logoUrl,
+                            },
+                            ReturnValues: 'ALL_NEW',
+                        }).promise();
+                        statusCode = '200';
+                        body = {
+                            success: `Logo URL added/updated for merchant ${result.Item.name}`,
+                            logoUrl: update.Attributes.logoUrl,
+                        };
+                    }
                 }
                 else {
                     errCode = '404';
