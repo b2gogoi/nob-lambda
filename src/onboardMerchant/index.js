@@ -6,8 +6,8 @@ const TABLE_NAME = 'shopnob-main-data';
 const MERCHANT_PK = 'MERCHANT';
 const MERCHANT_SK_PREFIX = 'MERCHANT#';
 
-const MERCHANT_LOCATION_PK = 'MERCHANT_LOCATION';
-const MERCHANT_LOCATION_SK_PREFIX = 'MERCHANT#';
+const MERCHANT_LOCATION_PK = 'MERCHANT#';
+const MERCHANT_LOCATION_SK_PREFIX = 'MERCHANT_LOCATION#';
 
 /**
  * Demonstrates a simple HTTP endpoint using API Gateway. You have full
@@ -28,7 +28,13 @@ exports.handler = async(event, context) => {
     const headers = {
         'Content-Type': 'application/json',
     };
-    let { merchantId } = event.queryStringParameters;
+
+    let merchantId;
+
+    if (event.queryStringParameters) {
+        merchantId = event.queryStringParameters.merchantId;
+    }
+
     try {
         switch (event.httpMethod) {
         case 'PUT':
@@ -82,7 +88,34 @@ exports.handler = async(event, context) => {
 
             const defLocation = locations[0];
 
-            const merchant = await dynamo.put({
+            body = await dynamo.batchWrite({
+                RequestItems: {
+                    'shopnob-main-data': [{
+                            PutRequest: {
+                                Item: {
+                                    partitionkey: MERCHANT_PK,
+                                    sortkey: `${MERCHANT_SK_PREFIX}${id}`,
+                                    id,
+                                    name,
+                                    category,
+                                    defaultLocationId: defLocation.locationId
+                                },
+                            },
+                        },
+                        {
+                            PutRequest: {
+                                Item: {
+                                    partitionkey: `${MERCHANT_LOCATION_PK}${id}`,
+                                    sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${defLocation.locationId}`,
+                                    ...defLocation
+                                },
+                            },
+                        },
+                    ],
+                },
+            }).promise();
+
+            /* const merchant = await dynamo.put({
                 TableName: TABLE_NAME,
                 Item: {
                     partitionkey: MERCHANT_PK,
@@ -101,9 +134,9 @@ exports.handler = async(event, context) => {
                     sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${id}`,
                     ...defLocation
                 }
-            }).promise();
+            }).promise(); */
 
-            body = { ...merchant, location };
+            // body = { ...merchant, location };
             statusCode = '201';
             break;
         case 'PUT':
