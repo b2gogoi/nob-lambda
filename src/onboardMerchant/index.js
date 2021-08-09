@@ -37,23 +37,6 @@ exports.handler = async(event, context) => {
 
     try {
         switch (event.httpMethod) {
-        case 'PUT':
-            if (merchantId) {
-                const location = JSON.parse(event.body);
-                body = await dynamo.put({
-                    TableName: TABLE_NAME,
-                    Item: {
-                        partitionkey: MERCHANT_LOCATION_PK,
-                        sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${merchantId}`,
-                        ...location
-                    }
-                }).promise();
-            }
-            else {
-                throw new Error(`MerchantId missing in queryParams`);
-            }
-
-            break;
         case 'GET':
             if (merchantId) {
                 const result = await dynamo.get({
@@ -138,7 +121,37 @@ exports.handler = async(event, context) => {
             statusCode = '201';
             break;
         case 'PUT':
-            body = await dynamo.update(JSON.parse(event.body)).promise();
+            if (merchantId) {
+                const result = await dynamo.get({
+                    TableName: TABLE_NAME,
+                    Key: {
+                        partitionkey: MERCHANT_PK,
+                        sortkey: `${MERCHANT_SK_PREFIX}${merchantId}`,
+                    },
+                }).promise();
+
+                if (result && result.Item) {
+                    const location = JSON.parse(event.body);
+                    await dynamo.put({
+                        TableName: TABLE_NAME,
+                        Item: {
+                            partitionkey: `${MERCHANT_LOCATION_PK}${merchantId}`,
+                            sortkey: `${MERCHANT_LOCATION_SK_PREFIX}${location.locationId}`,
+                            ...location
+                        }
+                    }).promise();
+                    statusCode = '201';
+                    body = { success: `A new branch: ${location.branch}, is added for merchant ${result.Item.name}` }
+                }
+                else {
+                    errCode = '404';
+                    throw new Error(`Not found : merchantId ${merchantId}`);
+                }
+            }
+            else {
+                errCode = '400';
+                throw new Error(`MerchantId missing in queryParams`);
+            }
             break;
         default:
             throw new Error(`Unsupported method "${event.httpMethod}"`);
