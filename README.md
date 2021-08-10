@@ -1,1 +1,1 @@
-# Hello ShoppeNOB
+# Hello ShoppeNOB backend lambda application
