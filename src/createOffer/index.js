@@ -12,7 +12,7 @@ const MERCHANT_SK_PREFIX = 'MERCHANT#';
 const MERCHANT_LOCATION_PK = 'MERCHANT#';
 const MERCHANT_LOCATION_SK_PREFIX = 'MERCHANT_LOCATION#';
 
-const OFFER_COUPON_PK = 'OFFER_COUPON#';
+const OFFER_COUPON_PK = 'OFFER_COUPON';
 const COUPON_CODE_SK_PREFIX = 'COUPON#';
 
 /*
@@ -20,10 +20,11 @@ const COUPON_CODE_SK_PREFIX = 'COUPON#';
     @param [padChars] string 3 char string for padding
     @returns Array
  */
-const padSequence = (count, padChars) => {
+const padSequence = (count, padChars, lastIndex) => {
     const paddedSequence = [];
+    
     for (let i = 0; i < count; i++) {
-        const seq = i + 24;
+        const seq = i + lastIndex + 24;
         if (seq < 10) {
             paddedSequence.push(`${padChars}${seq}`);
         } else if (seq < 100) {
@@ -39,7 +40,7 @@ const padSequence = (count, padChars) => {
 
 const genCouponCodes = (count, merchant, location, offer) => {
     const PAD_CHARS = `${offer.offerId.substr(0, 2)}${offer.offerId.substr(offer.offerId.length - 1)}`; // first 2 and last char od 
-    const seq = padSequence(count, PAD_CHARS.toUpperCase());
+    const seq = padSequence(count, PAD_CHARS.toUpperCase(), offer.currentIndex);
 
 	const first5 = merchant.category;
 
@@ -180,7 +181,8 @@ exports.handler = async(event) => {
                             partitionkey: `${MERCHANT_OFFER_PK}${merchantId}`,
                             sortkey: `${OFFER_SK_PREFIX}${offerId}`,
                             ...offer,
-                            merchantLocationId
+                            merchantLocationId,
+                            currentIndex: 0,
                         }
                     }).promise();
 
@@ -252,9 +254,10 @@ exports.handler = async(event) => {
                 const requestItems = codes.map(code => ({
                     PutRequest: {
                         Item: {
-                            partitionkey: `${OFFER_COUPON_PK}${offerId}`,
+                            partitionkey: OFFER_COUPON_PK,
                             sortkey: `${COUPON_CODE_SK_PREFIX}${code}`,
-                            code
+                            code,
+                            offerId
                         },
                     },
                 }));
@@ -265,9 +268,26 @@ exports.handler = async(event) => {
                     },
                 }).promise();
 
+                const total = offer.currentIndex + codes.length;
+
+                const update = await dynamo.update({
+                    TableName: TABLE_NAME,
+                    Key: {
+                        partitionkey: `${MERCHANT_OFFER_PK}${merchantId}`,
+                        sortkey: `${OFFER_SK_PREFIX}${offerId}`,
+                    },
+                    UpdateExpression: 'SET currentIndex = :total',
+                    ExpressionAttributeValues: {
+                        ':total': total,
+                    },
+                    ReturnValues: 'ALL_NEW',
+                }).promise();
+                statusCode = '200';
+                
                 body = {
                     result,
-                    success: `${codes.length} coupons generated`,
+                    success: `${codes.length} coupons generated and index update on offer`,
+                    newOfferIndex: update.Attributes.currentIndex,
                 };
                 statusCode = '201';
             }
