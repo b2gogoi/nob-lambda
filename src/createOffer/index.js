@@ -33,7 +33,55 @@ exports.handler = async(event) => {
 
     try {
         switch (event.httpMethod) {
-        
+        case 'GET':
+            if (merchantId) {
+                let queryParams = {
+                    TableName: TABLE_NAME,
+                    KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                    ExpressionAttributeNames: {
+                        '#pk': 'partitionkey',
+                    },
+                    ExpressionAttributeValues: {
+                        ':pk': `${MERCHANT_OFFER_PK}${merchantId}`,
+                        ':sk': OFFER_SK_PREFIX,
+                    },
+                };
+                const offersResult = await dynamo.query(queryParams).promise();
+                    
+                if ( offersResult && offersResult.Items && offersResult.Items.length > 0) {
+                    body = offersResult.Items.map(offer => {
+                        let clone = { ...offer };
+                        delete clone.partitionkey;
+                        delete clone.sortkey;
+                        return clone;
+                    });
+                } 
+                else {
+                    const result = await dynamo.get({
+                        TableName: TABLE_NAME,
+                        Key: {
+                            partitionkey: MERCHANT_PK,
+                            sortkey: `${MERCHANT_SK_PREFIX}${merchantId}`,
+                        },
+                    }).promise();
+                
+
+                    if (result && result.Item) {
+                        console.log(`Merchant: ${result.Item.name}[${merchantId}] doesn't have any offers yet`);
+                        body = [];
+                    }
+                    else {
+                        errCode = '404';
+                        throw new Error(`Not found : merchantId ${merchantId}`);
+                    }
+                }
+            }
+            else {
+                errCode = '400';
+                throw new Error(`MerchantId missing in queryParams`);
+            }
+            break;
+
         case 'POST':
             if (merchantId) {
                 const result = await dynamo.get({
