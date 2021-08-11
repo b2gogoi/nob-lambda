@@ -257,7 +257,8 @@ exports.handler = async(event) => {
                             partitionkey: OFFER_COUPON_PK,
                             sortkey: `${COUPON_CODE_SK_PREFIX}${code}`,
                             code,
-                            offerId
+                            offerId,
+                            isAssigned: false
                         },
                     },
                 }));
