@@ -258,6 +258,7 @@ exports.handler = async(event) => {
                             sortkey: `${COUPON_CODE_SK_PREFIX}${code}`,
                             code,
                             offerId,
+                            merchantId,
                             isAssigned: false
                         },
                     },
