@@ -18,6 +18,13 @@ const COUPON_CODE_SK_PREFIX = 'COUPON#';
 const USER_COUPON_PK = 'USER_COUPON#';
 const CCODE_SK_PREFIX = 'COUPON_CODE#';
 
+function formatDate(date) {
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`;
+    const day = `${date.getDate()}`;
+	return`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+}
+
 exports.handler = async(event) => {
     let body;
     let statusCode = '200';
@@ -44,7 +51,7 @@ exports.handler = async(event) => {
                     const offerCoupon = result.Item;
 
                     if (offerCoupon.isAssigned) {
-                        errCode = '403';
+                        errCode = '405';
                         throw new Error(`Coupon code : ${code} is already activated`);
                     } else {
                         // create new user coupon entry
@@ -58,25 +65,81 @@ exports.handler = async(event) => {
                             },
                         }).promise();
                         
-                        body = offerResult.Item;
+                        const offer = offerResult.Item;
+                        const { activationStartDate, activationEndDate, 
+                            desc,
+                            startDate, endDate,
+                            offerExpiryType, nDays,
+                            orderUnit, minOrder, maxDiscount,
+                            isAllLocation,
+                            merchantLocationId
+                         } = offer;
+                        const activationRange = [(new Date(activationStartDate)).getTime(), (new Date(activationEndDate)).getTime()];
 
-                        // set isAssigned to true in offer coupon
-                        /*
-                            const { offerId, isAllLocation} = offer;
-                    let { merchantLocationId } = offer;
+                        const now = new Date();
+                        const today = formatDate(now);
+                        const todayDate = new Date(today)
+                        let tommorrowDate = new Date();
+                        tommorrowDate.setTime(todayDate.getTime() + 86400000);
+                        const tommorrow = formatDate(tommorrowDate);
+                        // const tommorrowDate = new Date(tommorrow);
+                        const activationDateInMillis = tommorrowDate.getTime();
 
-                    if (merchantId !== offer.merchantId) {
-                        throw new Error(`Merchant Id in query params[${merchantId}] and request body[${offer.merchantId}] are not same`);
-                    }
+                        if (activationDateInMillis < activationRange[0] || activationDateInMillis > activationRange[1]) {
+                            errCode = '405';
+                            const errMessage = activationDateInMillis < activationRange[0]
+                                ? `as start date(${activationStartDate}) has not commenced`: `as last date(${activationEndDate}) has passed`;
 
-                    // If all location, then get the defaultLocation from merchant
-                    if (isAllLocation) {
-                        merchantLocationId = merchant.defaultLocationId;
-                    }
-                    else {
-                    // merchantLocationId must be present
-                        if (merchantLocationId) {
-                            // verify if locationId is for that merchant
+                            throw new Error(`Coupon cannot be activated now, ${errMessage}`);
+                        }
+
+                        const submissionDate = today;
+                        const activationDate = tommorrow;
+                        const status = 'ASSIGNED';
+                        const start = new Date(startDate);
+                        const startDateMillis = start.getTime();
+
+                        let expiryDate;
+                        if (offerExpiryType === 'FIXED') {
+                            expiryDate = endDate;
+                        } else if (offerExpiryType === 'NDAYS') {
+                            const expDate = new Date();
+                            if (startDateMillis > activationDateInMillis) {
+                                expDate.setTime(startDateMillis + (nDays * 86400000));
+                            } else {
+                                expDate.setTime(activationDateInMillis + (nDays * 86400000));
+                            }
+                            
+                            expiryDate = formatDate(expDate);
+                        }
+
+                        // if activationDate(tommorrow) is less than startDate use start date else use activationDate
+                        const validity = `${startDateMillis > activationDateInMillis? startDate : activationDate} to ${expiryDate}`;
+                        let conditions = '';
+
+                        if (maxDiscount) {
+                            conditions = `max discount of Rs ${maxDiscount}`
+                        }
+
+                        if (minOrder) {
+                            conditions = conditions.length > 0 ? `${conditions}, `: conditions;
+                            conditions = `${conditions}mininum ${orderUnit}: ${minOrder}`;
+                        }
+
+                        // extract Merchant details
+                        const merchantResult = await dynamo.get({
+                            TableName: TABLE_NAME,
+                            Key: {
+                                partitionkey: MERCHANT_PK,
+                                sortkey: `${MERCHANT_SK_PREFIX}${merchantId}`,
+                            },
+                        }).promise();
+
+                        const { name, logoUrl } = merchantResult.Item;
+
+                        let location = isAllLocation ? 'All Locations' : merchantLocationId;
+
+                        if (!isAllLocation) {
                             const merchantLocationResult = await dynamo.get({
                                 TableName: TABLE_NAME,
                                 Key: {
@@ -85,32 +148,54 @@ exports.handler = async(event) => {
                                 },
                             }).promise();
 
-                            if (!(merchantLocationResult && merchantLocationResult.Item)) {
-                                throw new Error(`Merchant Location Id${merchantLocationId} does not belong to merchant${merchant.name}-${merchantId}`);
+                            location = merchantLocationResult.Item.branch;
+                        }
+                        await dynamo.put({
+                            TableName: TABLE_NAME,
+                            Item: {
+                                partitionkey: `${USER_COUPON_PK}${phone}`,
+                                sortkey: `${CCODE_SK_PREFIX}${code}`,
+                                activationDate,
+                                submissionDate,
+                                desc,
+                                status,
+                                expiryDate,
+                                offerId,
+                                validity,
+                                conditions,
+                                merchantLocationId,
+                                name,
+                                logoUrl,
+                                location
                             }
-                        }
-                        else {
-                            throw new Error(`Merchant Location Id is required for non ALL locations offer`);
-                        }
+                        }).promise();
 
+                        // set isAssigned to true in offer coupon
+                        const update = await dynamo.update({
+                            TableName: TABLE_NAME,
+                            Key: {
+                                partitionkey: OFFER_COUPON_PK,
+                                sortkey: `${COUPON_CODE_SK_PREFIX}${code}`,
+                            },
+                            UpdateExpression: 'SET isAssigned = :flag',
+                            ExpressionAttributeValues: {
+                                ':flag': true,
+                            },
+                            ReturnValues: 'ALL_NEW',
+                        }).promise();
+
+                        statusCode = '201';
+
+                        body = {
+                            code,
+                            desc,
+                            validity,
+                            conditions,
+                            name,
+                            logoUrl,
+                            location
+                        }
                     }
-
-                    await dynamo.put({
-                        TableName: TABLE_NAME,
-                        Item: {
-                            partitionkey: `${MERCHANT_OFFER_PK}${merchantId}`,
-                            sortkey: `${OFFER_SK_PREFIX}${offerId}`,
-                            ...offer,
-                            merchantLocationId,
-                            currentIndex: 0,
-                        }
-                    }).promise();
-
-                    statusCode = '201';
-                        */
-                    }
-                    
-                    
                 }
                 else {
                     errCode = '404';
