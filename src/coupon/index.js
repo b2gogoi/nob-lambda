@@ -32,11 +32,83 @@ exports.handler = async(event) => {
     const headers = {
         'Content-Type': 'application/json',
     };
-
+    const { code, phone  } = JSON.parse(event.body);
     try {
         switch (event.httpMethod) {
+        case 'PUT':
+            
+            if (code && phone) {
+                const result = await dynamo.get({
+                    TableName: TABLE_NAME,
+                    Key: {
+                        partitionkey: `${USER_COUPON_PK}${phone}`,
+                        sortkey: `${CCODE_SK_PREFIX}${code}`,
+                    },
+                }).promise();
+
+                if (result && result.Item) {
+                    const { couponStatus, validityStart, expiryDate} = result.Item;
+
+                    if (couponStatus === 'REDEEMED' || couponStatus === 'EXPIRED') {
+                        errCode = '405';
+                        throw new Error(couponStatus === 'REDEEMED' ? 'Coupon is already redeemed' : 'Coupon expired');
+                    }
+                    const now = new Date();
+                    const redemptionDate = formatDate(now);
+                    const couponStart = new Date(validityStart);
+                    const couponEnd = new Date(expiryDate);
+
+                    if (now.getTime() < couponStart.getTime()) {
+                        errCode = '405';
+                        throw new Error('Offer not started yet');
+                    }
+
+                    if (now.getTime() > couponEnd.getTime()) {
+                        const updateExpired = await dynamo.update({
+                            TableName: TABLE_NAME,
+                            Key: {
+                                partitionkey: `${USER_COUPON_PK}${phone}`,
+                                sortkey: `${CCODE_SK_PREFIX}${code}`,
+                            },
+                            UpdateExpression: 'SET couponStatus = :cstatus',
+                            ExpressionAttributeValues: {
+                                ':cstatus': 'EXPIRED',
+                            },
+                            ReturnValues: 'ALL_NEW',
+                        }).promise();
+
+                        errCode = '405';
+                        throw new Error('Offer expired');
+                    }
+
+                    const updateRedemption = await dynamo.update({
+                            TableName: TABLE_NAME,
+                            Key: {
+                                partitionkey: `${USER_COUPON_PK}${phone}`,
+                                sortkey: `${CCODE_SK_PREFIX}${code}`,
+                            },
+                            UpdateExpression: 'SET couponStatus = :cstatus, redemptionDate = :redemptionDate',
+                            ExpressionAttributeValues: {
+                                ':cstatus': 'REDEEMED',
+                                ':redemptionDate': redemptionDate,
+                            },
+                            ReturnValues: 'ALL_NEW',
+                        }).promise();
+                    
+                }
+                else {
+                    errCode = '405';
+                    throw new Error(`Coupon not active yet`);
+                }
+            }
+            else {
+                errCode = '400';
+                throw new Error(`Phone number and Coupon code missing in request body`);
+            }
+
+            break;
         case 'POST':
-            const { code, phone  } = JSON.parse(event.body);
+            // const { code, phone  } = JSON.parse(event.body);
             if (code && phone) {
                 const result = await dynamo.get({
                     TableName: TABLE_NAME,
@@ -78,7 +150,7 @@ exports.handler = async(event) => {
 
                         const now = new Date();
                         const today = formatDate(now);
-                        const todayDate = new Date(today)
+                        const todayDate = new Date(today);
                         let tommorrowDate = new Date();
                         tommorrowDate.setTime(todayDate.getTime() + 86400000);
                         const tommorrow = formatDate(tommorrowDate);
@@ -95,7 +167,7 @@ exports.handler = async(event) => {
 
                         const submissionDate = today;
                         const activationDate = tommorrow;
-                        const status = 'ASSIGNED';
+                        const couponStatus = 'ASSIGNED';
                         const start = new Date(startDate);
                         const startDateMillis = start.getTime();
 
@@ -114,7 +186,11 @@ exports.handler = async(event) => {
                         }
 
                         // if activationDate(tommorrow) is less than startDate use start date else use activationDate
-                        const validity = `${startDateMillis > activationDateInMillis? startDate : activationDate} to ${expiryDate}`;
+                        const validityStart = startDateMillis > activationDateInMillis? startDate : activationDate;
+                        const expDate = new Date(expiryDate);
+                        expDate.setTime(expDate.getTime() - 86400000);
+                        const validityEnd = formatDate(expDate);
+                        const validity = `${validityStart} to ${validityEnd}`;
                         let conditions = '';
 
                         if (maxDiscount) {
@@ -158,7 +234,8 @@ exports.handler = async(event) => {
                                 activationDate,
                                 submissionDate,
                                 desc,
-                                status,
+                                couponStatus,
+                                validityStart,
                                 expiryDate,
                                 offerId,
                                 validity,
@@ -208,7 +285,6 @@ exports.handler = async(event) => {
             }
             break;
 
-        
         default:
             throw new Error(`Unsupported method "${event.httpMethod}"`);
         }
