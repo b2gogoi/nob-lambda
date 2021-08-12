@@ -32,11 +32,66 @@ exports.handler = async(event) => {
     const headers = {
         'Content-Type': 'application/json',
     };
-    const { code, phone  } = JSON.parse(event.body);
+    
+    let phone, code, reqBody;
+    
+    if (event.body) {
+        reqBody = JSON.parse(event.body);
+    }
+    
     try {
         switch (event.httpMethod) {
+        case 'GET':
+            phone = event.queryStringParameters.phone;
+            let queryParams = {
+                TableName: TABLE_NAME,
+                KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                ExpressionAttributeNames: {
+                    '#pk': 'partitionkey',
+                },
+                ExpressionAttributeValues: {
+                    ':pk': `${USER_COUPON_PK}${phone}`,
+                    ':sk': CCODE_SK_PREFIX,
+                },
+            };
+
+            const userCouponsResult = await dynamo.query(queryParams).promise();
+            const couponsArray = Object.values(userCouponsResult.Items.reduce((acc, ucoupon) => {
+                const { merchantId, logoUrl, name, location, desc, expiryDate } = ucoupon;
+                if (acc[merchantId]) {
+                    acc[merchantId].push({ merchantId, logoUrl, name, location, desc, expiryDate });
+                } else {
+                    acc[merchantId] = [{ merchantId, logoUrl, name, location, desc, expiryDate }];
+                }
+                return acc;
+            }, {}));
+            body = couponsArray.map(arr => {
+                if (arr.length > 1) {
+                    let soonest = arr[0];
+                    let soonestExpiry = soonest.expiryDate;
+                    let soonestExpiryDate = new Date(soonestExpiry);
+                    
+                    for (let i = 1; i <= arr.length - 1; i++) {
+                        const current = arr[i];
+                        const currentExpDate = new Date(current.expiryDate);
+                        
+                        if (currentExpDate.getTime() < soonestExpiryDate.getTime()) {
+                            soonest = current;
+                            soonestExpiryDate = currentExpDate;
+                        }
+                    }
+                    
+                    return { ...soonest, count: arr.length };
+                } else {
+                    return arr[0];
+                }
+            });
+            break;
+
         case 'PUT':
-            
+            code = reqBody.code;
+            phone = reqBody.phone;
+
             if (code && phone) {
                 const result = await dynamo.get({
                     TableName: TABLE_NAME,
@@ -108,7 +163,9 @@ exports.handler = async(event) => {
 
             break;
         case 'POST':
-            // const { code, phone  } = JSON.parse(event.body);
+            code = reqBody.code;
+            phone = reqBody.phone;
+
             if (code && phone) {
                 const result = await dynamo.get({
                     TableName: TABLE_NAME,
@@ -243,7 +300,8 @@ exports.handler = async(event) => {
                                 merchantLocationId,
                                 name,
                                 logoUrl,
-                                location
+                                location,
+                                merchantId
                             }
                         }).promise();
 
