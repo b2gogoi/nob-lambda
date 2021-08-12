@@ -43,49 +43,104 @@ exports.handler = async(event) => {
         switch (event.httpMethod) {
         case 'GET':
             phone = event.queryStringParameters.phone;
-            let queryParams = {
-                TableName: TABLE_NAME,
-                KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
-                ExpressionAttributeNames: {
-                    '#pk': 'partitionkey',
-                },
-                ExpressionAttributeValues: {
-                    ':pk': `${USER_COUPON_PK}${phone}`,
-                    ':sk': CCODE_SK_PREFIX,
-                },
-            };
-
-            const userCouponsResult = await dynamo.query(queryParams).promise();
-            const couponsArray = Object.values(userCouponsResult.Items.reduce((acc, ucoupon) => {
-                const { merchantId, logoUrl, name, location, desc, expiryDate } = ucoupon;
-                if (acc[merchantId]) {
-                    acc[merchantId].push({ merchantId, logoUrl, name, location, desc, expiryDate });
-                } else {
-                    acc[merchantId] = [{ merchantId, logoUrl, name, location, desc, expiryDate }];
-                }
-                return acc;
-            }, {}));
-            body = couponsArray.map(arr => {
-                if (arr.length > 1) {
-                    let soonest = arr[0];
-                    let soonestExpiry = soonest.expiryDate;
-                    let soonestExpiryDate = new Date(soonestExpiry);
-                    
-                    for (let i = 1; i <= arr.length - 1; i++) {
-                        const current = arr[i];
-                        const currentExpDate = new Date(current.expiryDate);
-                        
-                        if (currentExpDate.getTime() < soonestExpiryDate.getTime()) {
-                            soonest = current;
-                            soonestExpiryDate = currentExpDate;
+            const merchantId = event.queryStringParameters.merchantId;
+            
+            if (merchantId) {
+                const userMerchantCouponsResult = await dynamo.query({
+                    TableName: TABLE_NAME,
+                    KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                    FilterExpression: '#merchant = :merchantId',
+                    ExpressionAttributeNames: {
+                        '#pk': 'partitionkey',
+                        '#merchant': 'merchantId',
+                    },
+                    ExpressionAttributeValues: {
+                        ':pk': `${USER_COUPON_PK}${phone}`,
+                        ':sk': CCODE_SK_PREFIX,
+                        ':merchantId': merchantId
+                    },
+                }).promise();
+            
+                const merchantCoupons = userMerchantCouponsResult.Items;
+                
+                const merchantLocationsResult = await dynamo.query({
+                    TableName: TABLE_NAME,
+                    KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                    ExpressionAttributeNames: {
+                        '#pk': 'partitionkey',
+                    },
+                    ExpressionAttributeValues: {
+                        ':pk': `${MERCHANT_LOCATION_PK}${merchantId}`,
+                        ':sk': MERCHANT_LOCATION_SK_PREFIX,
+                    },
+                }).promise();
+                
+                const locationMap = merchantLocationsResult.Items.reduce((acc, loc) => {
+                    const { locationId, phone, whatsapp, weblink } = loc;
+                    acc[locationId] = { phone, whatsapp, weblink };
+                    return acc;
+                }, {});
+                
+                body = {
+                    name: merchantCoupons[0].name,
+                    logoUrl: merchantCoupons[0].logoUrl,
+                    coupons: merchantCoupons.map(cpn => {
+                        const { code, location, desc, conditions, validity, 
+                            couponStatus, validityStart, expiryDate,
+                            merchantLocationId
+                        } = cpn;
+                        return {
+                            code, location, desc, conditions, validity, couponStatus, 
+                            validityStart, expiryDate, ...locationMap[merchantLocationId]
                         }
-                    }
-                    
-                    return { ...soonest, count: arr.length };
-                } else {
-                    return arr[0];
+                    })
                 }
-            });
+            } else {
+                let queryParams = {
+                    TableName: TABLE_NAME,
+                    KeyConditionExpression: '#pk = :pk AND begins_with(sortkey, :sk)',
+                    ExpressionAttributeNames: {
+                        '#pk': 'partitionkey',
+                    },
+                    ExpressionAttributeValues: {
+                        ':pk': `${USER_COUPON_PK}${phone}`,
+                        ':sk': CCODE_SK_PREFIX,
+                    },
+                };
+
+                const userCouponsResult = await dynamo.query(queryParams).promise();
+                const couponsArray = Object.values(userCouponsResult.Items.reduce((acc, ucoupon) => {
+                    const { merchantId, logoUrl, name, location, desc, expiryDate } = ucoupon;
+                    if (acc[merchantId]) {
+                        acc[merchantId].push({ merchantId, logoUrl, name, location, desc, expiryDate });
+                    } else {
+                        acc[merchantId] = [{ merchantId, logoUrl, name, location, desc, expiryDate }];
+                    }
+                    return acc;
+                }, {}));
+                
+                body = couponsArray.map(arr => {
+                    if (arr.length > 1) {
+                        let soonest = arr[0];
+                        let soonestExpiry = soonest.expiryDate;
+                        let soonestExpiryDate = new Date(soonestExpiry);
+                        
+                        for (let i = 1; i <= arr.length - 1; i++) {
+                            const current = arr[i];
+                            const currentExpDate = new Date(current.expiryDate);
+                            
+                            if (currentExpDate.getTime() < soonestExpiryDate.getTime()) {
+                                soonest = current;
+                                soonestExpiryDate = currentExpDate;
+                            }
+                        }
+                        
+                        return { ...soonest, count: arr.length };
+                    } else {
+                        return arr[0];
+                    }
+                });
+            }
             break;
 
         case 'PUT':
@@ -301,7 +356,8 @@ exports.handler = async(event) => {
                                 name,
                                 logoUrl,
                                 location,
-                                merchantId
+                                merchantId,
+                                code
                             }
                         }).promise();
 
