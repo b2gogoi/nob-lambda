@@ -86,12 +86,12 @@ exports.handler = async(event) => {
                     logoUrl: merchantCoupons[0].logoUrl,
                     coupons: merchantCoupons.map(cpn => {
                         const { code, location, desc, conditions, validity, 
-                            couponStatus, validityStart, expiryDate,
+                            couponStatus, validityStart, expiryDate, redemptionDate,
                             merchantLocationId
                         } = cpn;
                         return {
                             code, location, desc, conditions, validity, couponStatus, 
-                            validityStart, expiryDate, ...locationMap[merchantLocationId]
+                            validityStart, expiryDate, redemptionDate, ...locationMap[merchantLocationId]
                         }
                     })
                 }
@@ -107,7 +107,6 @@ exports.handler = async(event) => {
                         ':sk': CCODE_SK_PREFIX,
                     },
                 };
-
                 const userCouponsResult = await dynamo.query(queryParams).promise();
                 const couponsArray = Object.values(userCouponsResult.Items.reduce((acc, ucoupon) => {
                     const { merchantId, logoUrl, name, location, desc, expiryDate } = ucoupon;
@@ -161,7 +160,7 @@ exports.handler = async(event) => {
 
                     if (couponStatus === 'REDEEMED' || couponStatus === 'EXPIRED') {
                         errCode = '405';
-                        throw new Error(couponStatus === 'REDEEMED' ? 'Coupon is already redeemed' : 'Coupon expired');
+                        throw new Error(couponStatus === 'REDEEMED' ? 'NOB is already redeemed' : 'NOB expired');
                     }
                     const now = new Date();
                     const redemptionDate = formatDate(now);
@@ -208,12 +207,12 @@ exports.handler = async(event) => {
                 }
                 else {
                     errCode = '405';
-                    throw new Error(`Coupon not active yet`);
+                    throw new Error(`NOB not active yet`);
                 }
             }
             else {
                 errCode = '400';
-                throw new Error(`Phone number and Coupon code missing in request body`);
+                throw new Error(`Phone number and NOB code missing in request body`);
             }
 
             break;
@@ -236,7 +235,7 @@ exports.handler = async(event) => {
 
                     if (offerCoupon.isAssigned) {
                         errCode = '405';
-                        throw new Error(`Coupon code : ${code} is already activated`);
+                        throw new Error(`NOB : ${code} is already activated`);
                     } else {
                         // create new user coupon entry
                         // 1. get offer
@@ -274,7 +273,7 @@ exports.handler = async(event) => {
                             const errMessage = activationDateInMillis < activationRange[0]
                                 ? `as start date(${activationStartDate}) has not commenced`: `as last date(${activationEndDate}) has passed`;
 
-                            throw new Error(`Coupon cannot be activated now, ${errMessage}`);
+                            throw new Error(`NOB cannot be activated now, ${errMessage}`);
                         }
 
                         const submissionDate = today;
@@ -390,12 +389,12 @@ exports.handler = async(event) => {
                 }
                 else {
                     errCode = '404';
-                    throw new Error(`Invalid coupon code`);
+                    throw new Error(`Invalid NOB`);
                 }
             }
             else {
                 errCode = '400';
-                throw new Error(`Phone number and Coupon code missing in request body`);
+                throw new Error(`Phone number and NOB code missing in request body`);
             }
             break;
 
